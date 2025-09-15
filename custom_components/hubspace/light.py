@@ -75,6 +75,10 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
     @property
     def effect(self) -> str | None:
         """Get the current effect for the light."""
+        # Check for night-light mode first
+        if self.resource.color_mode and self.resource.color_mode.mode == "night-light":
+            return "night-light"
+        # Check for sequence effects
         return (
             self.resource.effect.effect
             if (self.resource.effect and self.resource.color_mode.mode == "sequence")
@@ -85,8 +89,22 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
     def effect_list(self) -> list[str] | None:
         """Get all available effects for the light."""
         all_effects = []
-        for effects in self.resource.effect.effects.values() or []:
-            all_effects.extend(effects)
+
+        # Add sequence effects
+        if self.resource.effect and self.resource.effect.effects:
+            for effects in self.resource.effect.effects.values():
+                if effects:
+                    all_effects.extend(effects)
+
+        # Check if night-light is available as a color mode
+        # We do this by checking if the light supports effects and if it has a color_mode attribute
+        if (hasattr(self.resource, 'color_mode') and 
+            self.resource.color_mode and 
+            self.supported_features & LightEntityFeature.EFFECT):
+            # For now, we'll add night-light as an available effect
+            # This covers the exhaust fan case where night-light is a color-mode option
+            all_effects.append("night-light")
+
         return all_effects or None
 
     @property
@@ -147,7 +165,11 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
         color: tuple[int, int, int] | None = kwargs.get(ATTR_RGB_COLOR)
         effect: str | None = kwargs.get(ATTR_EFFECT)
         color_mode: str | None = None
-        if temperature:
+        if effect == "night-light":
+            color_mode = "night-light"
+            # Clear brightness for night-light mode as it has "no-brightness" hint
+            brightness = None
+        elif temperature:
             color_mode = "white"
         elif color:
             color_mode = "color"
@@ -189,6 +211,9 @@ def get_color_mode(resource: Light, supported_modes: set[ColorMode]) -> ColorMod
             return ColorMode.COLOR_TEMP
         if ColorMode.BRIGHTNESS in supported_modes:
             return ColorMode.BRIGHTNESS
+        return ColorMode.ONOFF
+    if resource.color_mode.mode == "night-light":
+        # Night-light mode typically doesn't support brightness
         return ColorMode.ONOFF
     return list(supported_modes)[-1] if len(supported_modes) else ColorMode.ONOFF
 

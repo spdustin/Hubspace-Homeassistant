@@ -28,6 +28,15 @@ light_a21 = create_devices_from_data("light-a21.json")[0]
 light_a21_id = "light.friendly_device_53_light"
 rgbw_led_strip = create_devices_from_data("rgbw-led-strip.json")[0]
 
+# Exhaust fan light with night-light mode
+exhaust_fan = create_devices_from_data("fan-exhaust-fan.json")
+exhaust_fan_light = None
+for device in exhaust_fan:
+    if device.device_class == "light":
+        exhaust_fan_light = device
+        break
+exhaust_fan_light_id = "light.r3_closet_light"
+
 
 @pytest.fixture
 async def mocked_entity(mocked_entry):
@@ -47,6 +56,18 @@ async def mocked_dimmer(mocked_entry):
     await bridge.generate_devices_from_data([switch_dimmer_light])
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    yield hass, entry, bridge
+    await bridge.close()
+
+
+@pytest.fixture
+async def mocked_exhaust_fan_light(mocked_entry):
+    """Initialize a mocked exhaust fan light and register it within Home Assistant."""
+    hass, entry, bridge = mocked_entry
+    if exhaust_fan_light:
+        await bridge.generate_devices_from_data([exhaust_fan_light])
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
     yield hass, entry, bridge
     await bridge.close()
 
@@ -495,3 +516,83 @@ async def test_add_new_device(
         assert entity_reg.async_get(entity) is not None, (
             f"Unable to find entity {entity}"
         )
+
+
+@pytest.mark.asyncio
+async def test_exhaust_fan_night_light_effect_list(mocked_exhaust_fan_light):
+    """Ensure exhaust fan light exposes night-light as an available effect."""
+    hass, _, bridge = mocked_exhaust_fan_light
+    if not exhaust_fan_light:
+        pytest.skip("Exhaust fan light not found in test data")
+
+    entity = hass.states.get(exhaust_fan_light_id)
+    assert entity is not None
+
+    # Check that night-light is available as an effect
+    effect_list = entity.attributes.get("effect_list", [])
+    assert "night-light" in effect_list, f"night-light not found in effect_list: {effect_list}"
+
+
+@pytest.mark.asyncio
+async def test_exhaust_fan_night_light_activation(mocked_exhaust_fan_light):
+    """Ensure exhaust fan light can activate night-light mode."""
+    hass, _, bridge = mocked_exhaust_fan_light
+    if not exhaust_fan_light:
+        pytest.skip("Exhaust fan light not found in test data")
+
+    # Turn on the light with night-light effect
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": exhaust_fan_light_id, ATTR_EFFECT: "night-light"},
+        blocking=True,
+    )
+    update_call = bridge.request.call_args_list[-1]
+    assert update_call.args[0] == "put"
+    payload = update_call.kwargs["json"]
+    assert payload["metadeviceId"] == exhaust_fan_light.id
+
+    # Check that the color_mode is set to night-light
+    color_mode_update = None
+    for value in payload["values"]:
+        if value.get("functionClass") == "color-mode":
+            color_mode_update = value
+            break
+
+    assert color_mode_update is not None, "No color-mode update found in payload"
+    assert color_mode_update["value"] == "night-light", f"Expected night-light mode, got {color_mode_update['value']}"
+
+
+@pytest.mark.asyncio
+async def test_exhaust_fan_night_light_state_tracking(mocked_exhaust_fan_light):
+    """Ensure exhaust fan light correctly reports night-light as current effect."""
+    hass, _, bridge = mocked_exhaust_fan_light
+    if not exhaust_fan_light:
+        pytest.skip("Exhaust fan light not found in test data")
+
+    # Simulate the device being in night-light mode
+    exhaust_fan_update = create_devices_from_data("fan-exhaust-fan.json")
+    light_update = None
+    for device in exhaust_fan_update:
+        if device.device_class == "light":
+            light_update = device
+            break
+
+    assert light_update is not None, "Light device not found in test data"
+
+    # Modify the state to show night-light mode is active
+    modify_state(
+        light_update,
+        AferoState(
+            functionClass="color-mode",
+            functionInstance=None,
+            value="night-light",
+        ),
+    )
+
+    await bridge.generate_devices_from_data([light_update])
+    await hass.async_block_till_done()
+
+    entity = hass.states.get(exhaust_fan_light_id)
+    assert entity is not None
+    assert entity.attributes.get(ATTR_EFFECT) == "night-light"
