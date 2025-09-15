@@ -98,8 +98,8 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
 
         # Check if night-light is available as a color mode
         # We do this by checking if the light supports effects and if it has a color_mode attribute
-        if (hasattr(self.resource, 'color_mode') and 
-            self.resource.color_mode and 
+        if (hasattr(self.resource, 'color_mode') and
+            self.resource.color_mode and
             self.supported_features & LightEntityFeature.EFFECT):
             # For now, we'll add night-light as an available effect
             # This covers the exhaust fan case where night-light is a color-mode option
